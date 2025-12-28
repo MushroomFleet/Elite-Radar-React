@@ -149,6 +149,27 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 Inspired by the radar system from Elite Dangerous by Frontier Developments.
 
+## 📚 Citation
+
+### Academic Citation
+
+If you use this codebase in your research or project, please cite:
+
+```bibtex
+@software{elite_radar_react,
+  title = {Elite Radar React: Inspired by the radar system from Elite},
+  author = {[Drift Johnson]},
+  year = {2025},
+  url = {https://github.com/MushroomFleet/Elite-Radar-React},
+  version = {1.0.0}
+}
+```
+
+### Donate:
+
+
+[![Ko-Fi](https://cdn.ko-fi.com/cdn/kofi3.png?v=3)](https://ko-fi.com/driftjohnson)
+
 ## Acknowledgments
 
 - Elite Dangerous for the original radar concept
