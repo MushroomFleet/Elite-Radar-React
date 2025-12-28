@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elite-Style 3D Radar</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Courier New', monospace;
+      background: radial-gradient(ellipse at center, #0a1a0a 0%, #000800 50%, #000 100%);
+    }
+    
+    body.dangerous {
+      background: radial-gradient(ellipse at center, #1a0f05 0%, #0a0500 50%, #000 100%);
+    }
+    
+    #canvas-container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+    
+    canvas {
+      display: block;
+    }
+    
+    .overlay {
+      position: absolute;
+      pointer-events: none;
+      z-index: 10;
+    }
+    
+    .header {
+      top: 16px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 12px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+    
+    .classic .header { color: #00ff44; text-shadow: 0 0 10px #00ff44; }
+    .dangerous .header { color: #ff8800; text-shadow: 0 0 10px #ff8800; }
+    
+    .theme-btn {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      z-index: 20;
+      background: transparent;
+      padding: 6px 14px;
+      cursor: pointer;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      transition: all 0.3s;
+      pointer-events: auto;
+    }
+    
+    .classic .theme-btn {
+      border: 1px solid #00ff44;
+      color: #00ff44;
+      text-shadow: 0 0 5px #00ff44;
+    }
+    
+    .dangerous .theme-btn {
+      border: 1px solid #ff8800;
+      color: #ff8800;
+      text-shadow: 0 0 5px #ff8800;
+    }
+    
+    .theme-btn:hover {
+      background: rgba(255,255,255,0.1);
+    }
+    
+    .legend {
+      bottom: 16px;
+      left: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 9px;
+      letter-spacing: 1px;
+    }
+    
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    
+    .legend-dot {
+      width: 7px;
+      height: 7px;
+    }
+    
+    .info {
+      bottom: 16px;
+      right: 16px;
+      font-size: 9px;
+      letter-spacing: 1px;
+      text-align: right;
+    }
+    
+    .classic .info { color: #00aa00; }
+    .dangerous .info { color: #663300; }
+    
+    .scanlines {
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.1) 2px,
+        rgba(0,0,0,0.1) 4px
+      );
+      z-index: 5;
+    }
+    
+    .vignette {
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.6) 100%);
+      z-index: 6;
+    }
+  </style>
+</head>
+<body class="classic">
+  <div id="canvas-container">
+    <div class="overlay header">◆ Scanner Display ◆</div>
+    <button class="theme-btn" onclick="toggleTheme()">◀ Classic</button>
+    <div class="overlay legend" id="legend"></div>
+    <div class="overlay info">
+      <div>RANGE: 5.0 KM</div>
+      <div id="contact-count">CONTACTS: 9</div>
+    </div>
+    <div class="overlay scanlines"></div>
+    <div class="overlay vignette"></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    // ========== THEMES ==========
+    const themes = {
+      classic: {
+        dish: { color: 0x00ff00, opacity: 0.15 },
+        ring: { color: 0x00ff44, opacity: 0.6 },
+        grid: { color: 0x00aa00, opacity: 0.25 },
+        center: { color: 0x00ff00 },
+        stalk: { opacity: 0.6 },
+        contacts: {
+          hostile: 0xff3333,
+          friendly: 0x33ff88,
+          neutral: 0xffff33,
+          station: 0x00ffff,
+          missile: 0xff00ff
+        },
+        scanline: 0x00ff00
+      },
+      dangerous: {
+        dish: { color: 0xff6600, opacity: 0.12 },
+        ring: { color: 0xff8800, opacity: 0.5 },
+        grid: { color: 0x663300, opacity: 0.2 },
+        center: { color: 0xff8800 },
+        stalk: { opacity: 0.5 },
+        contacts: {
+          hostile: 0xff4444,
+          friendly: 0x44ff66,
+          neutral: 0xff9900,
+          station: 0x4499ff,
+          missile: 0xff44ff
+        },
+        scanline: 0xff6600
+      }
+    };
+    
+    let currentTheme = 'classic';
+    let theme = themes.classic;
+    
+    // ========== SETUP ==========
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 2.2, 2.2);
+    camera.lookAt(0, 0, 0);
+    
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    container.insertBefore(renderer.domElement, container.firstChild);
+    
+    // ========== RADAR COMPONENTS ==========
+    const radarGroup = new THREE.Group();
+    scene.add(radarGroup);
+    
+    const RADAR_RADIUS = 1;
+    const MAX_RANGE = 5000;
+    
+    // Dish (hemisphere)
+    const dishGeom = new THREE.SphereGeometry(RADAR_RADIUS, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+    const dishMat = new THREE.MeshBasicMaterial({
+      color: theme.dish.color,
+      wireframe: true,
+      transparent: true,
+      opacity: theme.dish.opacity,
+      depthWrite: false
+    });
+    const dish = new THREE.Mesh(dishGeom, dishMat);
+    dish.rotation.x = Math.PI;
+    radarGroup.add(dish);
+    
+    // Equatorial ring
+    const ringPoints = [];
+    for (let i = 0; i <= 64; i++) {
+      const angle = (i / 64) * Math.PI * 2;
+      ringPoints.push(new THREE.Vector3(Math.cos(angle) * RADAR_RADIUS, 0, Math.sin(angle) * RADAR_RADIUS));
+    }
+    const ringGeom = new THREE.BufferGeometry().setFromPoints(ringPoints);
+    const ringMat = new THREE.LineBasicMaterial({ color: theme.ring.color, transparent: true, opacity: theme.ring.opacity });
+    const ring = new THREE.Line(ringGeom, ringMat);
+    radarGroup.add(ring);
+    
+    // Grid - spokes
+    const gridGroup = new THREE.Group();
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      const spokeGeom = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(Math.cos(angle) * RADAR_RADIUS, 0, Math.sin(angle) * RADAR_RADIUS)
+      ]);
+      const spokeMat = new THREE.LineBasicMaterial({ color: theme.grid.color, transparent: true, opacity: theme.grid.opacity });
+      gridGroup.add(new THREE.Line(spokeGeom, spokeMat));
+    }
+    
+    // Grid - range rings
+    for (let r = 1; r < 4; r++) {
+      const ringRadius = (r / 4) * RADAR_RADIUS;
+      const pts = [];
+      for (let i = 0; i <= 32; i++) {
+        const angle = (i / 32) * Math.PI * 2;
+        pts.push(new THREE.Vector3(Math.cos(angle) * ringRadius, 0, Math.sin(angle) * ringRadius));
+      }
+      const geom = new THREE.BufferGeometry().setFromPoints(pts);
+      const mat = new THREE.LineBasicMaterial({ color: theme.grid.color, transparent: true, opacity: theme.grid.opacity });
+      gridGroup.add(new THREE.Line(geom, mat));
+    }
+    radarGroup.add(gridGroup);
+    
+    // Center marker
+    const centerGroup = new THREE.Group();
+    const crossGeom1 = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-0.03, 0, 0), new THREE.Vector3(0.03, 0, 0)
+    ]);
+    const crossGeom2 = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, -0.03), new THREE.Vector3(0, 0, 0.03)
+    ]);
+    const crossMat = new THREE.LineBasicMaterial({ color: theme.center.color });
+    centerGroup.add(new THREE.Line(crossGeom1, crossMat));
+    centerGroup.add(new THREE.Line(crossGeom2, crossMat.clone()));
+    
+    const centerDotGeom = new THREE.SphereGeometry(0.015, 8, 8);
+    const centerDotMat = new THREE.MeshBasicMaterial({ color: theme.center.color });
+    centerGroup.add(new THREE.Mesh(centerDotGeom, centerDotMat));
+    radarGroup.add(centerGroup);
+    
+    // Heading indicator
+    const headingGeom = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0.002, 0),
+      new THREE.Vector3(0, 0.002, -RADAR_RADIUS * 0.15)
+    ]);
+    const headingMat = new THREE.LineBasicMaterial({ color: theme.center.color });
+    const headingLine = new THREE.Line(headingGeom, headingMat);
+    radarGroup.add(headingLine);
+    
+    const arrowGeom = new THREE.ConeGeometry(0.02, 0.04, 3);
+    const arrowMat = new THREE.MeshBasicMaterial({ color: theme.center.color });
+    const arrow = new THREE.Mesh(arrowGeom, arrowMat);
+    arrow.position.set(0, 0.002, -RADAR_RADIUS * 0.15);
+    arrow.rotation.x = Math.PI / 2;
+    radarGroup.add(arrow);
+    
+    // Scan sweep
+    const sweepGeom = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0.001, 0),
+      new THREE.Vector3(RADAR_RADIUS, 0.001, 0)
+    ]);
+    const sweepMat = new THREE.LineBasicMaterial({ color: theme.scanline, transparent: true, opacity: 0.4 });
+    const sweep = new THREE.Line(sweepGeom, sweepMat);
+    radarGroup.add(sweep);
+    
+    // ========== CONTACTS ==========
+    const contactsData = [
+      { id: 'hostile-1', position: [2000, 800, 1500], type: 'hostile' },
+      { id: 'hostile-2', position: [-1500, 400, 2000], type: 'hostile' },
+      { id: 'friendly-1', position: [1000, -300, -800], type: 'friendly' },
+      { id: 'friendly-2', position: [-500, 200, -1200], type: 'friendly' },
+      { id: 'neutral-1', position: [3000, 100, 500], type: 'neutral' },
+      { id: 'neutral-2', position: [-2500, -600, -500], type: 'neutral' },
+      { id: 'station-1', position: [0, 0, -4000], type: 'station', selected: true },
+      { id: 'missile-1', position: [800, 1200, 400], type: 'missile' },
+      { id: 'missile-2', position: [-600, -400, 800], type: 'missile' }
+    ];
+    
+    const contactObjects = [];
+    const contactsGroup = new THREE.Group();
+    radarGroup.add(contactsGroup);
+    
+    function transformToRadar(worldPos) {
+      const [x, y, z] = worldPos;
+      const distance = Math.sqrt(x*x + y*y + z*z);
+      const normalizedDist = Math.min(distance / MAX_RANGE, 1);
+      const horizontalDist = Math.sqrt(x*x + z*z);
+      const theta = Math.atan2(x, z);
+      const phi = Math.atan2(y, horizontalDist);
+      
+      const radarHDist = normalizedDist * RADAR_RADIUS;
+      const radarX = radarHDist * Math.sin(theta);
+      const radarZ = radarHDist * Math.cos(theta);
+      const radarY = normalizedDist * Math.sin(phi) * RADAR_RADIUS * 0.5;
+      
+      return {
+        position: [radarX, radarY, radarZ],
+        base: [radarX, 0, radarZ]
+      };
+    }
+    
+    function createContact(data) {
+      const group = new THREE.Group();
+      const color = theme.contacts[data.type];
+      const radar = transformToRadar(data.position);
+      
+      // Stalk
+      const stalkGeom = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(...radar.base),
+        new THREE.Vector3(...radar.position)
+      ]);
+      const stalkMat = new THREE.LineBasicMaterial({ 
+        color: color, 
+        transparent: true, 
+        opacity: theme.stalk.opacity 
+      });
+      const stalk = new THREE.Line(stalkGeom, stalkMat);
+      group.add(stalk);
+      
+      // Base point
+      const baseGeom = new THREE.CircleGeometry(0.015, 6);
+      const baseMat = new THREE.MeshBasicMaterial({ 
+        color: color, 
+        transparent: true, 
+        opacity: 0.4,
+        side: THREE.DoubleSide
+      });
+      const base = new THREE.Mesh(baseGeom, baseMat);
+      base.position.set(...radar.base);
+      base.rotation.x = -Math.PI / 2;
+      group.add(base);
+      
+      // Marker
+      let markerGeom;
+      const size = 0.025;
+      const isWireframe = data.type === 'friendly' || data.type === 'station';
+      
+      switch(data.type) {
+        case 'hostile':
+        case 'friendly':
+          markerGeom = new THREE.BoxGeometry(size, size, size);
+          break;
+        case 'station':
+          markerGeom = new THREE.BoxGeometry(size * 1.8, size * 1.8, size * 1.8);
+          break;
+        case 'missile':
+          markerGeom = new THREE.ConeGeometry(size * 0.6, size * 1.2, 3);
+          break;
+        default:
+          markerGeom = new THREE.SphereGeometry(size * 0.6, 8, 8);
+      }
+      
+      const markerMat = new THREE.MeshBasicMaterial({
+        color: color,
+        wireframe: isWireframe,
+        transparent: true,
+        opacity: data.selected ? 1 : 0.85
+      });
+      const marker = new THREE.Mesh(markerGeom, markerMat);
+      marker.position.set(...radar.position);
+      group.add(marker);
+      
+      contactsGroup.add(group);
+      
+      return {
+        data: data,
+        group: group,
+        stalk: stalk,
+        base: base,
+        marker: marker,
+        stalkMat: stalkMat,
+        baseMat: baseMat,
+        markerMat: markerMat
+      };
+    }
+    
+    function updateContact(obj) {
+      const radar = transformToRadar(obj.data.position);
+      
+      // Update stalk
+      obj.stalk.geometry.setFromPoints([
+        new THREE.Vector3(...radar.base),
+        new THREE.Vector3(...radar.position)
+      ]);
+      
+      // Update base
+      obj.base.position.set(...radar.base);
+      
+      // Update marker
+      obj.marker.position.set(...radar.position);
+    }
+    
+    // Create all contacts
+    contactsData.forEach(data => {
+      contactObjects.push(createContact(data));
+    });
+    
+    // ========== LEGEND ==========
+    function updateLegend() {
+      const legend = document.getElementById('legend');
+      const types = [
+        { type: 'hostile', label: 'HOSTILE' },
+        { type: 'friendly', label: 'FRIENDLY' },
+        { type: 'neutral', label: 'NEUTRAL' },
+        { type: 'station', label: 'STATION' },
+        { type: 'missile', label: 'MISSILE' }
+      ];
+      
+      legend.innerHTML = types.map(t => {
+        const color = '#' + theme.contacts[t.type].toString(16).padStart(6, '0');
+        return `<div class="legend-item" style="color:${color}">
+          <span class="legend-dot" style="background:${color};box-shadow:0 0 6px ${color}"></span>
+          ${t.label}
+        </div>`;
+      }).join('');
+    }
+    updateLegend();
+    
+    // ========== THEME TOGGLE ==========
+    function toggleTheme() {
+      currentTheme = currentTheme === 'classic' ? 'dangerous' : 'classic';
+      theme = themes[currentTheme];
+      document.body.className = currentTheme;
+      
+      // Update button
+      document.querySelector('.theme-btn').textContent = 
+        currentTheme === 'classic' ? '◀ Classic' : 'Dangerous ▶';
+      
+      // Update materials
+      dishMat.color.setHex(theme.dish.color);
+      dishMat.opacity = theme.dish.opacity;
+      ringMat.color.setHex(theme.ring.color);
+      ringMat.opacity = theme.ring.opacity;
+      
+      gridGroup.children.forEach(child => {
+        child.material.color.setHex(theme.grid.color);
+        child.material.opacity = theme.grid.opacity;
+      });
+      
+      centerGroup.children.forEach(child => {
+        if (child.material) child.material.color.setHex(theme.center.color);
+      });
+      
+      headingMat.color.setHex(theme.center.color);
+      arrowMat.color.setHex(theme.center.color);
+      sweepMat.color.setHex(theme.scanline);
+      
+      // Update contacts
+      contactObjects.forEach(obj => {
+        const color = theme.contacts[obj.data.type];
+        obj.stalkMat.color.setHex(color);
+        obj.stalkMat.opacity = theme.stalk.opacity;
+        obj.baseMat.color.setHex(color);
+        obj.markerMat.color.setHex(color);
+      });
+      
+      updateLegend();
+    }
+    
+    // ========== ANIMATION ==========
+    let sweepAngle = 0;
+    let time = 0;
+    
+    function animate() {
+      requestAnimationFrame(animate);
+      time += 0.016;
+      
+      // Rotate sweep
+      sweepAngle += 0.025;
+      sweep.rotation.y = sweepAngle;
+      
+      // Gentle radar wobble
+      radarGroup.rotation.y = Math.sin(time * 0.1) * 0.1;
+      
+      // Rotate center marker
+      centerGroup.rotation.y = time * 0.5;
+      
+      // Animate contacts (drift)
+      contactObjects.forEach(obj => {
+        obj.data.position[0] += (Math.random() - 0.5) * 15;
+        obj.data.position[1] += (Math.random() - 0.5) * 8;
+        obj.data.position[2] += (Math.random() - 0.5) * 15;
+        updateContact(obj);
+        
+        // Pulse selected
+        if (obj.data.selected) {
+          const scale = 1 + Math.sin(time * 5) * 0.2;
+          obj.marker.scale.setScalar(scale);
+        }
+      });
+      
+      renderer.render(scene, camera);
+    }
+    
+    animate();
+    
+    // ========== RESIZE ==========
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
